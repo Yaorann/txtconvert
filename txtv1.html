@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <title>對話紀錄轉換器</title>
+  <style>
+    /* 暗色主題 */
+    @import url('https://fonts.googleapis.com/css2?family=LXGW+WenKai+Mono+TC&family=Noto+Serif+HK:wght@200..900&family=Noto+Serif+TC:wght@200..900&display=swap');
+    body { 
+        font-family: "Noto Serif HK", serif; 
+      background: #171717; 
+      color: #dcdcd2;
+      padding: 30px;
+    }
+    h2, h3 { color: #dcdcd2; }
+    
+    .chat-container { max-width: 700px; margin: auto; }
+    .bubble { 
+      padding: 14px 18px; 
+      border-radius: 18px; 
+      margin: 12px 0; 
+      display: inline-block; 
+      max-width: 80%; 
+      font-size: 1.1em;
+      background-color: rgba(30, 30, 30, 0.9); /* 對話框背景 */
+      color: #dcdcd2; /* 文字顏色 */
+      box-shadow: 1px 2px 8px rgba(0,0,0,0.3);
+    }
+    .left { float: left; clear: both; }
+    .right { float: right; clear: both; }
+    .clearfix { clear: both; }
+    
+    button { 
+      padding: 8px 20px; 
+      font-size: 1em; 
+      margin: 5px; 
+      background: #333; 
+      color: #dcdcd2; 
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    button:hover { background: #444; }
+    
+    .controls { 
+      margin-bottom: 20px; 
+      background: #222; 
+      padding: 20px; 
+      border-radius: 8px; 
+      box-shadow: 0 2px 5px rgba(0,0,0,0.2); 
+      max-width: 700px; 
+      margin-left: auto; 
+      margin-right: auto; 
+    }
+    
+    .role-settings { margin-top: 20px; }
+    .role-item { margin-bottom: 10px; display: flex; align-items: center; }
+    .role-name { width: 100px; font-weight: bold; color: #dcdcd2; }
+    .preview-bubble { width: 50px; height: 25px; display: inline-block; border-radius: 5px; margin: 0 10px; }
+    .avatar-preview { width: 32px; height: 32px; border-radius: 50%; object-fit: cover; background: #333; margin: 0 10px; }
+    
+    .bubble-row { display: flex; align-items: flex-start; margin-bottom: 3px; }
+    .bubble-row.right { flex-direction: row-reverse; }
+    
+    /* 大頭貼和名稱樣式 */
+    .avatar-container { display: flex; flex-direction: column; align-items: center; min-width: 60px; }
+    .avatar { width: 48px; height: 48px; border-radius: 50%; object-fit: cover; margin-bottom: 5px; }
+    .avatar-name { font-size: 0.8em; text-align: center; font-weight: bold; color: #dcdcd2; word-break: keep-all; max-width: 60px; }
+    
+    input[type="file"] {
+      background: #333;
+      color: #dcdcd2;
+      border: 1px solid #444;
+      padding: 5px;
+      border-radius: 4px;
+    }
+    
+    /* Markdown 樣式 */
+    .message-content h1, 
+    .message-content h2, 
+    .message-content h3, 
+    .message-content h4, 
+    .message-content h5, 
+    .message-content h6 { margin: 8px 0; color: #dcdcd2; }
+    .message-content h1 { font-size: 1.5em; }
+    .message-content h2 { font-size: 1.35em; }
+    .message-content h3 { font-size: 1.2em; }
+    .message-content pre { background: rgba(0,0,0,0.3); padding: 10px; border-radius: 5px; overflow-x: auto; }
+    .message-content code { background: rgba(0,0,0,0.3); padding: 2px 4px; border-radius: 3px; font-family: monospace; }
+    .message-content blockquote { margin: 10px 0; padding-left: 10px; border-left: 3px solid #555; color: #999; }
+    .message-content ul, 
+    .message-content ol { margin: 8px 0; padding-left: 25px; }
+    .message-content p { margin: 8px 0; }
+    .message-content a { color: #799bd8; text-decoration: none; }
+    .message-content a:hover { text-decoration: underline; }
+    .message-content i { color: #919191; } /* 斜體顏色 */
+    .message-content .quote { color: rgba(225, 138, 36, 1); } /* 「」引號內的文字顏色 */
+  </style>
+</head>
+<body>
+  <h2>TXT對話紀錄轉換器</h2>
+  
+  <div class="controls">
+    <div>
+      <label for="fileUpload">上傳對話紀錄檔案：</label>
+      <input type="file" id="fileUpload" accept=".txt">
+      <button onclick="loadFile()">載入檔案</button>
+    </div>
+    
+    <div class="role-settings" id="roleSettings"></div>
+    
+    <div style="margin-top: 20px;">
+      <button onclick="generateChat()">產生對話框</button>
+      <button onclick="downloadHTML()">下載 HTML 檔案</button>
+    </div>
+  </div>
+  
+  <div class="chat-container" id="chat"></div>
+  
+  <script>
+    let dialog = [];
+    let roleSettings = {};
+    let roleOrder = [];
+    
+    // 載入 txt 檔案
+    function loadFile() {
+      const fileInput = document.getElementById('fileUpload');
+      const file = fileInput.files[0];
+      
+      if (!file) {
+        alert('請選擇檔案');
+        return;
+      }
+      
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        const txt = e.target.result;
+        parseDialog(txt);
+        detectRoles();
+        showRoleSettings();
+      };
+      reader.readAsText(file);
+    }
+    
+    // 解析對話
+    function parseDialog(txt) {
+      const lines = txt.split('\n');
+      dialog = [];
+      let currentSpeaker = null;
+      let currentLines = [];
+      
+      lines.forEach(line => {
+        line = line.trim();
+        if (!line) return;
+        
+        const match = line.match(/^(.+?):\s*(.*)/);
+        if (match) {
+          if (currentSpeaker) {
+            dialog.push([currentSpeaker, currentLines.join('\n')]);
+          }
+          currentSpeaker = match[1];
+          const content = match[2];
+          currentLines = content ? [content] : [];
+        } else {
+          currentLines.push(line);
+        }
+      });
+      
+      if (currentSpeaker) {
+        dialog.push([currentSpeaker, currentLines.join('\n')]);
+      }
+    }
+    
+    // 偵測對話中的角色
+    function detectRoles() {
+      roleOrder = [];
+      dialog.forEach(item => {
+        const role = item[0];
+        if (!roleOrder.includes(role)) {
+          roleOrder.push(role);
+          if (!roleSettings[role]) {
+            // 預設設定 - 暗色主題對話框
+            roleSettings[role] = {
+              color: roleOrder.indexOf(role) % 2 === 0 ? 'rgba(30, 30, 30, 0.9)' : 'rgba(40, 40, 40, 0.9)',
+              avatar: null
+            };
+          }
+        }
+      });
+    }
+    
+    // 顯示角色設定介面
+    function showRoleSettings() {
+      const container = document.getElementById('roleSettings');
+      let html = '<h3>角色設定</h3>';
+      
+      roleOrder.forEach(role => {
+        const settings = roleSettings[role];
+        html += `
+          <div class="role-item">
+            <div class="role-name">${role}</div>
+            <div class="preview-bubble" style="background-color: ${settings.color}"></div>
+            <input type="color" value="${settings.color}" 
+                   onchange="updateRoleColor('${role}', this.value)">
+            <img class="avatar-preview" src="${settings.avatar || '#'}" 
+                 style="${settings.avatar ? '' : 'display:none;'}">
+            <input type="file" accept="image/*" 
+                   onchange="updateRoleAvatar('${role}', event)">
+          </div>
+        `;
+      });
+      
+      container.innerHTML = html;
+    }
+    
+    // 更新角色顏色
+    function updateRoleColor(role, color) {
+      roleSettings[role].color = color;
+      const roleItems = document.querySelectorAll('.role-item');
+      roleItems.forEach(item => {
+        const roleName = item.querySelector('.role-name');
+        if (roleName && roleName.textContent === role) {
+          item.querySelector('.preview-bubble').style.backgroundColor = color;
+        }
+      });
+    }
+    
+    // 更新角色大頭貼
+    function updateRoleAvatar(role, event) {
+      const file = event.target.files[0];
+      if (!file) return;
+      
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        roleSettings[role].avatar = e.target.result;
+        const roleItems = document.querySelectorAll('.role-item');
+        roleItems.forEach(item => {
+          const roleName = item.querySelector('.role-name');
+          if (roleName && roleName.textContent === role) {
+            const preview = item.querySelector('.avatar-preview');
+            preview.src = e.target.result;
+            preview.style.display = '';
+          }
+        });
+      };
+      reader.readAsDataURL(file);
+    }
+    
+    // 解析 Markdown 和格式化內容
+    function formatContent(content) {
+      // 處理「」引號的內容，使其顯示為橙色
+      content = content.replace(/「([^」]+)」/g, '<span class="quote">「$1」</span>');
+      
+      // 解析 Markdown
+      // 1. 程式碼區塊
+      content = content.replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>');
+      
+      // 2. 行內程式碼
+      content = content.replace(/`([^`]+)`/g, '<code>$1</code>');
+      
+      // 3. 標題
+      content = content.replace(/^# (.*$)/gm, '<h1>$1</h1>');
+      content = content.replace(/^## (.*$)/gm, '<h2>$1</h2>');
+      content = content.replace(/^### (.*$)/gm, '<h3>$1</h3>');
+      content = content.replace(/^#### (.*$)/gm, '<h4>$1</h4>');
+      content = content.replace(/^##### (.*$)/gm, '<h5>$1</h5>');
+      content = content.replace(/^###### (.*$)/gm, '<h6>$1</h6>');
+      
+      // 4. 粗體和斜體
+      content = content.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+      content = content.replace(/\*((?!\*).+?)\*/g, '<i>$1</i>');
+      content = content.replace(/_((?!_).+?)_/g, '<i>$1</i>');
+      
+      // 5. 刪除線
+      content = content.replace(/~~(.*?)~~/g, '<del>$1</del>');
+      
+      // 6. 引用
+      content = content.replace(/^> (.*$)/gm, '<blockquote>$1</blockquote>');
+      
+      // 7. 有序列表
+      content = content.replace(/^\d+\. (.*$)/gm, '<li>$1</li>');
+      content = content.replace(/(<li>.*<\/li>)(?!\n<li>)/gms, '<ol>$1</ol>');
+      
+      // 8. 無序列表
+      content = content.replace(/^- (.*$)/gm, '<li>$1</li>');
+      content = content.replace(/^• (.*$)/gm, '<li>$1</li>');
+      content = content.replace(/(<li>.*<\/li>)(?!\n<li>)/gms, '<ul>$1</ul>');
+      
+      // 9. 連結
+      content = content.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
+      
+      // 10. 段落
+      content = content.replace(/\n\n/g, '</p><p>');
+      
+      // 11. 簡單換行（保留原本的換行）
+      content = content.replace(/\n/g, '<br>');
+      
+      return content;
+    }
+    
+    // 產生對話框
+    function generateChat() {
+      const chatContainer = document.getElementById('chat');
+      let html = '';
+      
+      dialog.forEach((item, idx) => {
+        const role = item[0];
+        const content = item[1];
+        const side = idx % 2 === 0 ? 'left' : 'right';
+        const settings = roleSettings[role] || { color: 'rgba(30, 30, 30, 0.9)', avatar: null };
+        
+        html += `
+          <div class="bubble-row ${side}">
+            <div class="avatar-container">
+              ${settings.avatar ? `<img class="avatar" src="${settings.avatar}">` : '<div class="avatar" style="background-color: #333;"></div>'}
+              <div class="avatar-name">${role}</div>
+            </div>
+            <div class="bubble ${side}" style="background-color: ${settings.color};">
+              <div class="message-content">${formatContent(content)}</div>
+            </div>
+          </div>
+          <div class="clearfix"></div>
+        `;
+      });
+      
+      chatContainer.innerHTML = html;
+    }
+    
+    // 下載 HTML 檔案
+    function downloadHTML() {
+      // 產生對話內容
+      let chatHtml = '';
+      dialog.forEach((item, idx) => {
+        const role = item[0];
+        const content = item[1];
+        const side = idx % 2 === 0 ? 'left' : 'right';
+        const settings = roleSettings[role] || { color: 'rgba(30, 30, 30, 0.9)', avatar: null };
+        
+        chatHtml += `
+          <div class="bubble-row ${side}">
+            <div class="avatar-container">
+              ${settings.avatar ? `<img class="avatar" src="${settings.avatar}">` : '<div class="avatar" style="background-color: #333;"></div>'}
+              <div class="avatar-name">${role}</div>
+            </div>
+            <div class="bubble ${side}" style="background-color: ${settings.color};">
+              <div class="message-content">${formatContent(content)}</div>
+            </div>
+          </div>
+          <div class="clearfix"></div>
+        `;
+      });
+      
+      // 完整 HTML 檔案內容
+      const fullHtml = `<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <title>對話紀錄</title>
+  <style>
+    /* 暗色主題 */
+    @import url('https://fonts.googleapis.com/css2?family=LXGW+WenKai+Mono+TC&family=Noto+Serif+HK:wght@200..900&family=Noto+Serif+TC:wght@200..900&display=swap');
+    body { 
+      font-family: "Noto Serif HK", serif; 
+      background: #171717; 
+      color: #dcdcd2;
+      padding: 30px;
+    }
+    
+    .chat-container { max-width: 700px; margin: auto; }
+    .bubble { 
+      padding: 14px 18px; 
+      border-radius: 18px; 
+      margin: 12px 0; 
+      display: inline-block; 
+      max-width: 80%; 
+      font-size: 1.1em;
+      background-color: rgba(30, 30, 30, 0.9);
+      color: #dcdcd2;
+      box-shadow: 1px 2px 8px rgba(0,0,0,0.3);
+    }
+    .left { float: left; clear: both; }
+    .right { float: right; clear: both; }
+    .clearfix { clear: both; }
+    .bubble-row { display: flex; align-items: flex-start; margin-bottom: 3px; }
+    .bubble-row.right { flex-direction: row-reverse; }
+    
+    /* 大頭貼和名稱樣式 */
+    .avatar-container { display: flex; flex-direction: column; align-items: center; min-width: 60px; }
+    .avatar { width: 48px; height: 48px; border-radius: 50%; object-fit: cover; margin-bottom: 5px; }
+    .avatar-name { font-size: 0.8em; text-align: center; font-weight: bold; color: #dcdcd2; word-break: keep-all; max-width: 60px; }
+    
+    /* Markdown 樣式 */
+    .message-content h1, 
+    .message-content h2, 
+    .message-content h3, 
+    .message-content h4, 
+    .message-content h5, 
+    .message-content h6 { margin: 8px 0; color: #dcdcd2; }
+    .message-content h1 { font-size: 1.5em; }
+    .message-content h2 { font-size: 1.35em; }
+    .message-content h3 { font-size: 1.2em; }
+    .message-content pre { background: rgba(0,0,0,0.3); padding: 10px; border-radius: 5px; overflow-x: auto; }
+    .message-content code { background: rgba(0,0,0,0.3); padding: 2px 4px; border-radius: 3px; font-family: monospace; }
+    .message-content blockquote { margin: 10px 0; padding-left: 10px; border-left: 3px solid #555; color: #999; }
+    .message-content ul, 
+    .message-content ol { margin: 8px 0; padding-left: 25px; }
+    .message-content p { margin: 8px 0; }
+    .message-content a { color: #799bd8; text-decoration: none; }
+    .message-content a:hover { text-decoration: underline; }
+    .message-content i { color: #919191; } /* 斜體顏色 */
+    .message-content .quote { color: rgba(225, 138, 36, 1); } /* 「」引號內的文字顏色 */
+  </style>
+</head>
+<body>
+  <div class="chat-container">
+    ${chatHtml}
+  </div>
+</body>
+</html>`;
+      
+      // 創建下載連結
+      const blob = new Blob([fullHtml], { type: 'text/html' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = '對話紀錄.html';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+  </script>
+</body>
+</html>
